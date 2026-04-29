@@ -46,7 +46,7 @@ resource "aws_route_table_association" "weather_rta" {
   route_table_id = aws_route_table.weather_rt.id
 }
 
-# --- אבטחה ---
+# --- אבטחה (Security Group) ---
 
 resource "aws_security_group" "weather_sg" {
   name   = "weather-sg"
@@ -90,6 +90,38 @@ resource "aws_key_pair" "weather_key" {
   public_key = file("~/.ssh/weather_aws_key.pub")
 }
 
+# --- הגדרות IAM (הרשאות למכונה לדבר עם DynamoDB) ---
+
+# 1. יצירת ה-Role (ה"כובע")
+resource "aws_iam_role" "weather_tracker_role" {
+  name = "weather_tracker_role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+      },
+    ]
+  })
+}
+
+# 2. הצמדת הרשאת DynamoDB ל-Role
+resource "aws_iam_role_policy_attachment" "dynamo_access" {
+  role       = aws_iam_role.weather_tracker_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
+}
+
+# 3. יצירת פרופיל שמקשר את ה-Role למכונה פיזית
+resource "aws_iam_instance_profile" "weather_instance_profile" {
+  name = "weather_instance_profile"
+  role = aws_iam_role.weather_tracker_role.name
+}
+
 # --- המכונה (EC2) ---
 
 resource "aws_instance" "weather_server" {
@@ -98,6 +130,9 @@ resource "aws_instance" "weather_server" {
   subnet_id              = aws_subnet.weather_subnet.id
   vpc_security_group_ids = [aws_security_group.weather_sg.id]
   key_name               = aws_key_pair.weather_key.key_name
+  
+  # חיבור ה-IAM Profile שיצרנו למעלה
+  iam_instance_profile   = aws_iam_instance_profile.weather_instance_profile.name
 
   root_block_device {
     volume_size = 20 
@@ -107,17 +142,17 @@ resource "aws_instance" "weather_server" {
 
   user_data = <<-EOF
               #!/bin/bash
-              # 1. הגדרת Swap של 2GB למניעת קריסות זיכרון
+              # 1. הגדרת Swap
               fallocate -l 2G /swapfile
               chmod 600 /swapfile
               mkswap /swapfile
               swapon /swapfile
               echo '/swapfile none swap sw 0 0' >> /etc/fstab
 
-              # 2. התקנת K3s בגרסה קלה
+              # 2. התקנת K3s
               curl -sfL https://get.k3s.io | sh -s - --disable traefik --disable metrics-server
 
-              # 3. הכנת ה-Kubeconfig ל-User
+              # 3. הכנת ה-Kubeconfig
               mkdir -p /home/ec2-user/.kube
               cp /etc/rancher/k3s/k3s.yaml /home/ec2-user/.kube/config
               chown ec2-user:ec2-user /home/ec2-user/.kube/config
@@ -139,7 +174,7 @@ resource "aws_dynamodb_table" "weather_history" {
 
   attribute {
     name = "search_id"
-    type = "S" # String (UUID/Timestamp)
+    type = "S"
   }
 
   tags = {

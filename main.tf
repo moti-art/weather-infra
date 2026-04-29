@@ -12,7 +12,8 @@ data "aws_ami" "latest_amazon_linux_2023" {
   }
 }
 
-# רשת - VPC, Subnet, IGW, Route Table
+# --- תשתיות רשת ---
+
 resource "aws_vpc" "weather_vpc" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
@@ -45,7 +46,8 @@ resource "aws_route_table_association" "weather_rta" {
   route_table_id = aws_route_table.weather_rt.id
 }
 
-# אבטחה - פתיחת פורטים ל-SSH, K3s API (Lens), ו-NodePort
+# --- אבטחה ---
+
 resource "aws_security_group" "weather_sg" {
   name   = "weather-sg"
   vpc_id = aws_vpc.weather_vpc.id
@@ -82,13 +84,14 @@ resource "aws_security_group" "weather_sg" {
   }
 }
 
-# מפתח SSH - וודא שהנתיב נכון אצלך במחשב!
+# מפתח SSH
 resource "aws_key_pair" "weather_key" {
   key_name   = "weather-server-key"
   public_key = file("~/.ssh/weather_aws_key.pub")
 }
 
-# המכונה עצמה
+# --- המכונה (EC2) ---
+
 resource "aws_instance" "weather_server" {
   ami                    = data.aws_ami.latest_amazon_linux_2023.id
   instance_type          = "t3.micro"
@@ -97,35 +100,60 @@ resource "aws_instance" "weather_server" {
   key_name               = aws_key_pair.weather_key.key_name
 
   root_block_device {
-    volume_size = 20 # 20GB זה מעולה ומכוסה ב-Free Tier
+    volume_size = 20 
   }
 
   tags = { Name = "weather-gitops-server" }
 
-  # הסקריפט שמכין את הכל באופן אוטומטי
   user_data = <<-EOF
               #!/bin/bash
-              # 1. הגדרת Swap של 2GB כדי למנוע קריסות זיכרון
+              # 1. הגדרת Swap של 2GB למניעת קריסות זיכרון
               fallocate -l 2G /swapfile
               chmod 600 /swapfile
               mkswap /swapfile
               swapon /swapfile
               echo '/swapfile none swap sw 0 0' >> /etc/fstab
 
-              # 2. התקנת K3s בגרסה קלה (בלי ה-UI של Argo ובלי LoadBalancer מיותר)
+              # 2. התקנת K3s בגרסה קלה
               curl -sfL https://get.k3s.io | sh -s - --disable traefik --disable metrics-server
-              
-              # 3. הכנת ה-Kubeconfig לשימוש של ה-User (ec2-user)
+
+              # 3. הכנת ה-Kubeconfig ל-User
               mkdir -p /home/ec2-user/.kube
               cp /etc/rancher/k3s/k3s.yaml /home/ec2-user/.kube/config
               chown ec2-user:ec2-user /home/ec2-user/.kube/config
-              
-              # 4. התקנת ArgoCD Core (גרסה קלה ללא ממשק גרפי)
+
+              # 4. התקנת ArgoCD Core
               kubectl create namespace argocd
               kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/core-install.yaml
               EOF
 }
 
+# --- בסיס נתונים (DynamoDB) ---
+
+resource "aws_dynamodb_table" "weather_history" {
+  name           = "weather_history"
+  billing_mode   = "PROVISIONED"
+  read_capacity  = 5
+  write_capacity = 5
+  hash_key       = "search_id"
+
+  attribute {
+    name = "search_id"
+    type = "S" # String (UUID/Timestamp)
+  }
+
+  tags = {
+    Name        = "weather-tracker-db"
+    Environment = "dev"
+  }
+}
+
+# --- פלטים ---
+
 output "server_public_ip" {
   value = aws_instance.weather_server.public_ip
+}
+
+output "dynamodb_table_name" {
+  value = aws_dynamodb_table.weather_history.name
 }

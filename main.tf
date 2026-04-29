@@ -87,7 +87,7 @@ resource "aws_security_group" "weather_sg" {
 # מפתח SSH
 resource "aws_key_pair" "weather_key" {
   key_name   = "weather-server-key"
-  public_key = file("~/.ssh/weather_aws_key.pub")
+  public_key = file("my-aws-key.pub")
 }
 
 # --- הגדרות IAM (הרשאות למכונה לדבר עם DynamoDB) ---

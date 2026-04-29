@@ -1,0 +1,14 @@
+# Terraform local state
+*.tfstate
+*.tfstate.*
+
+# Terraform plugins and binaries
+.terraform/
+.terraform.lock.hcl
+
+# SSH Keys (Private and Public)
+my-aws-key
+my-aws-key.pub
+
+# IDE settings
+.vscode/
